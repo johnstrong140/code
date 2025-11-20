@@ -1,0 +1,196 @@
+import time
+
+import rclpy
+from rclpy.node import Node
+
+from geometry_msgs.msg import Twist
+from std_msgs.msg import String
+from std_srvs.srv import Empty
+
+
+MORSE_CODE = {
+    'A': '.-',
+    'B': '-...',
+    'C': '-.-.',
+    'D': '-..',
+    'E': '.',
+    'F': '..-.',
+    'G': '--.',
+    'H': '....',
+    'I': '..',
+    'J': '.---',
+    'K': '-.-',
+    'L': '.-..',
+    'M': '--',
+    'N': '-.',
+    'O': '---',
+    'P': '.--.',
+    'Q': '--.-',
+    'R': '.-.',
+    'S': '...',
+    'T': '-',
+    'U': '..-',
+    'V': '...-',
+    'W': '.--',
+    'X': '-..-',
+    'Y': '-.--',
+    'Z': '--..',
+    '0': '-----',
+    '1': '.----',
+    '2': '..---',
+    '3': '...--',
+    '4': '....-',
+    '5': '.....',
+    '6': '-....',
+    '7': '--...',
+    '8': '---..',
+    '9': '----.',
+}
+
+# Durations in seconds
+DOT_DURATION = 0.2
+DASH_DURATION = 0.4
+SYMBOL_PAUSE = 0.2
+LETTER_PAUSE = 0.4
+WORD_PAUSE = 0.8
+
+FORWARD_SPEED = 1.5      # linear.x
+TURN_SPEED = 1.5         # angular.z
+LETTER_TURN_DURATION = 0.3
+
+
+class MorseTurtleNode(Node):
+
+    def __init__(self):
+        super().__init__('morse_turtle_node')
+
+        # Publisher to move the turtle
+        self.cmd_pub = self.create_publisher(Twist, '/turtle1/cmd_vel', 10)
+
+        # Subscriber to get the user name
+        self.name_sub = self.create_subscription(
+            String,
+            '/user_name',
+            self.name_callback,
+            10
+        )
+
+        # Client to clear the screen (optional)
+        self.clear_client = self.create_client(Empty, '/clear')
+
+        self.get_logger().info('MorseTurtleNode started. Waiting for /user_name messages...')
+
+    def name_callback(self, msg: String):
+        name = msg.data.strip()
+        if not name:
+            self.get_logger().warn('Received empty name, ignoring.')
+            return
+
+        self.get_logger().info(f'Received name: "{name}"')
+
+        # Clear the screen before drawing new name
+        self.clear_screen()
+
+        # Convert each character to Morse and draw it
+        upper_name = name.upper()
+        for i, ch in enumerate(upper_name):
+            if ch == ' ':
+                # Word gap
+                self.get_logger().info('Space detected: word gap.')
+                self.pause(WORD_PAUSE)
+                continue
+
+            pattern = MORSE_CODE.get(ch)
+            if pattern is None:
+                self.get_logger().warn(f'No Morse code for character "{ch}", skipping.')
+                continue
+
+            self.get_logger().info(f'Letter {ch}: {pattern}')
+
+            for j, symbol in enumerate(pattern):
+                if symbol == '.':
+                    self.get_logger().info('Dot')
+                    self.move_forward(DOT_DURATION)
+                elif symbol == '-':
+                    self.get_logger().info('Dash')
+                    self.move_forward(DASH_DURATION)
+                else:
+                    self.get_logger().warn(f'Unknown symbol "{symbol}" in pattern, skipping.')
+                    continue
+
+                # Pause between symbols within a letter
+                if j < len(pattern) - 1:
+                    self.pause(SYMBOL_PAUSE)
+
+            # After each letter, small turn so pattern is not a straight line
+            self.turn_in_place(LETTER_TURN_DURATION)
+
+            # Pause between letters
+            if i < len(upper_name) - 1:
+                self.pause(LETTER_PAUSE)
+
+        self.get_logger().info('Finished drawing Morse code for name.')
+
+    # ===== movement helpers =====
+
+    def move_forward(self, duration: float):
+        twist = Twist()
+        twist.linear.x = FORWARD_SPEED
+        twist.angular.z = 0.0
+        self.publish_for_duration(twist, duration)
+        self.stop()
+
+    def turn_in_place(self, duration: float):
+        twist = Twist()
+        twist.linear.x = 0.0
+        twist.angular.z = TURN_SPEED
+        self.publish_for_duration(twist, duration)
+        self.stop()
+
+    def stop(self):
+        twist = Twist()  # all zeros
+        self.cmd_pub.publish(twist)
+
+    def publish_for_duration(self, twist: Twist, duration: float):
+        end_time = time.time() + duration
+        while time.time() < end_time and rclpy.ok():
+            self.cmd_pub.publish(twist)
+            time.sleep(0.05)
+
+    def pause(self, duration: float):
+        # Just stop and wait
+        self.stop()
+        time.sleep(duration)
+
+    # ===== service helper =====
+
+    def clear_screen(self):
+        if not self.clear_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().warn('/clear service not available, skipping clear.')
+            return
+
+        req = Empty.Request()
+        future = self.clear_client.call_async(req)
+
+        # Block until service returns (simple but fine for this project)
+        rclpy.spin_until_future_complete(self, future)
+        if future.result() is not None:
+            self.get_logger().info('Screen cleared.')
+        else:
+            self.get_logger().warn('Failed to call /clear service.')
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = MorseTurtleNode()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
