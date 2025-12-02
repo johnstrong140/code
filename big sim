@@ -1,0 +1,15 @@
+from launch import LaunchDescription
+from launch.actions import SetEnvironmentVariable
+from launch_ros.actions import Node
+
+def generate_launch_description():
+    return LaunchDescription([
+        SetEnvironmentVariable('TURTLESIM_WINDOW_WIDTH', '1600'),
+        SetEnvironmentVariable('TURTLESIM_WINDOW_HEIGHT', '1200'),
+
+        Node(
+            package='turtlesim',
+            executable='turtlesim_node',
+            name='turtlesim_big'
+        )
+    ])
